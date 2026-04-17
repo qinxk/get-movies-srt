@@ -170,7 +170,24 @@
       </div>
     </div>
 
-    <script src="./app.js"></script>
+    <!--
+      GitHub Pages 项目页：若访问 .../site（无尾部 /），相对路径 ./app.js 会错误解析到 .../app.js，导致脚本 404，按钮无反应。
+      下面按 pathname 计算与当前页同目录的 app.js 地址。
+    -->
+    <script>
+      (function () {
+        function pageBasePath() {
+          var p = location.pathname;
+          if (p.endsWith('/')) return p;
+          if (/\.html$/i.test(p)) return p.replace(/\/[^/]+$/, '/');
+          return p + '/';
+        }
+        var s = document.createElement('script');
+        s.src = pageBasePath() + 'app.js';
+        s.defer = true;
+        document.body.appendChild(s);
+      })();
+    </script>
   </body>
 </html>
 

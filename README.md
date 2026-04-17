@@ -3,7 +3,7 @@
 本仓库提供一个 **手机可用** 的字幕下载工具：
 
 - **GitHub Pages**：提供网页 UI（输入 → 解析预览 → 下载）
-- **Cloudflare Workers**：负责抓取 SubtitleCat（选 downloads 最大 + 简体优先中文 SRT）并代理返回 `.srt`，同时用你的输入命名文件
+- **Cloudflare Workers**：负责抓取 SubtitleCat（选 downloads 前三 + 简体优先中文 SRT）并代理返回 `.srt`，同时用你的输入命名文件
 
 ---
 

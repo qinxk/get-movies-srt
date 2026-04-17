@@ -71,6 +71,11 @@ function clearDownloadLinks() {
   if (wrap) wrap.innerHTML = '';
 }
 
+function clearPreview() {
+  var container = $('preview');
+  if (container) container.innerHTML = '';
+}
+
 function fillDownloadLinks(query, data) {
   clearDownloadLinks();
   var wrap = $('downloadLinks');
@@ -143,7 +148,7 @@ function onResolve() {
   clearDownloadLinks();
 
   setStatus('解析中（可能需几秒，正在抓取前 3 条详情）...', 'info');
-  setPreview({});
+  clearPreview();
 
   resolveQuery(query)
     .then(function (data) {
@@ -184,7 +189,7 @@ function onClear() {
   var q = $('query');
   if (q) q.value = '';
   setStatus('', 'info');
-  setPreview({});
+  clearPreview();
   clearDownloadLinks();
   if (q && q.focus) q.focus();
 }

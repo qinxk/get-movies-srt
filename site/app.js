@@ -180,10 +180,21 @@ function onResolve() {
     });
 }
 
+function onClear() {
+  var q = $('query');
+  if (q) q.value = '';
+  setStatus('', 'info');
+  setPreview({});
+  clearDownloadLinks();
+  if (q && q.focus) q.focus();
+}
+
 function bindUi() {
   var rb = $('resolveBtn');
+  var cb = $('clearBtn');
   var q = $('query');
   if (rb) rb.addEventListener('click', onResolve);
+  if (cb) cb.addEventListener('click', onClear);
   if (q) {
     q.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') onResolve();

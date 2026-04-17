@@ -72,13 +72,10 @@ function rankChineseSrtContext(contextText) {
   return generic ? 100 : 0;
 }
 
-function pickBestSearchResult(searchHtml) {
-  // Extract rows in a lightweight way and pick max downloads.
-  // Each result row typically contains: <a href="subs/.../*.html"> ... </a> ... <td>67 downloads</td>
+function pickAllSearchResultsSorted(searchHtml) {
   const html = String(searchHtml || '');
   const trMatches = html.match(/<tr[\s\S]*?<\/tr>/gi) || [];
-
-  let best = null;
+  const rows = [];
 
   for (const tr of trMatches) {
     const hrefMatch = tr.match(/<a[^>]+href="([^"]*(?:\/)?subs\/[^"]+?\.html)"[^>]*>([\s\S]*?)<\/a>/i);
@@ -87,20 +84,14 @@ function pickBestSearchResult(searchHtml) {
     const href = hrefMatch[1];
     const title = hrefMatch[2].replace(/<[^>]*>/g, '').trim();
 
-    const downloads = (() => {
-      // Prefer explicit "N downloads" within the row.
-      const m = tr.match(/(\d[\d,]{0,})\s*(downloads|下载)\b/i);
-      if (!m) return 0;
-      const parsed = parseDownloadsFromText(m[0]);
-      return parsed === null ? 0 : parsed;
-    })();
+    const m = tr.match(/(\d[\d,]{0,})\s*(downloads|下载)\b/i);
+    const downloads = m ? (parseDownloadsFromText(m[0]) ?? 0) : 0;
 
-    if (!best || downloads > best.downloads) {
-      best = { href, downloads, title };
-    }
+    rows.push({ href, downloads, title });
   }
 
-  return best;
+  rows.sort((a, b) => b.downloads - a.downloads);
+  return rows;
 }
 
 function pickBestChineseSrt(detailHtml) {
@@ -142,10 +133,10 @@ async function fetchTextOrThrow(url, init) {
   return await res.text();
 }
 
-async function resolveSubtitle(query) {
+async function resolveSubtitlesQuery(query) {
   const input = String(query || '').trim();
   const searchCode = extractSearchCode(input);
-  const filename = `${sanitizeFilenameBase(input)}.srt`;
+  const base = sanitizeFilenameBase(input);
 
   const searchUrl = `${SUBTITLECAT_ORIGIN}/index.php?search=${encodeURIComponent(searchCode)}`;
   const searchHtml = await fetchTextOrThrow(searchUrl, {
@@ -155,51 +146,76 @@ async function resolveSubtitle(query) {
     },
   });
 
-  const bestResult = pickBestSearchResult(searchHtml);
-  if (!bestResult) {
+  const sorted = pickAllSearchResultsSorted(searchHtml);
+  if (!sorted.length) {
     return {
       input,
       searchCode,
-      filename,
+      baseFilename: base,
+      downloadsTop3: [],
       topResult: null,
+      filename: `${base}_1.srt`,
       subtitle: null,
       error: 'NO_RESULTS',
     };
   }
 
-  const detailUrl = new URL(bestResult.href, SUBTITLECAT_ORIGIN).href;
-  const detailHtml = await fetchTextOrThrow(detailUrl, {
-    headers: {
-      'user-agent': 'subtitlecat-srt/1.0 (+workers)',
-      'accept': 'text/html',
-    },
-  });
+  const top3source = sorted.slice(0, 3);
+  const downloadsTop3 = [];
 
-  const bestSrt = pickBestChineseSrt(detailHtml);
-  if (!bestSrt) {
-    return {
-      input,
-      searchCode,
-      filename,
-      topResult: { ...bestResult, detailUrl },
-      subtitle: null,
-      error: 'NO_CHINESE_SRT',
-    };
+  for (let i = 0; i < top3source.length; i++) {
+    const r = top3source[i];
+    const rank = i + 1;
+    const detailUrl = new URL(r.href, SUBTITLECAT_ORIGIN).href;
+    let subtitle = null;
+
+    try {
+      const detailHtml = await fetchTextOrThrow(detailUrl, {
+        headers: {
+          'user-agent': 'subtitlecat-srt/1.0 (+workers)',
+          'accept': 'text/html',
+        },
+      });
+      const bestSrt = pickBestChineseSrt(detailHtml);
+      if (bestSrt) {
+        subtitle = {
+          downloadUrl: new URL(bestSrt.href, SUBTITLECAT_ORIGIN).href,
+          score: bestSrt.score,
+          label: bestSrt.label || null,
+        };
+      }
+    } catch {
+      subtitle = null;
+    }
+
+    downloadsTop3.push({
+      rank,
+      downloads: r.downloads,
+      title: r.title,
+      detailUrl,
+      filename: `${base}_${rank}.srt`,
+      subtitle,
+    });
   }
 
-  const downloadUrl = new URL(bestSrt.href, SUBTITLECAT_ORIGIN).href;
+  const anyChinese = downloadsTop3.some((x) => x.subtitle);
+  const firstWith = downloadsTop3.find((x) => x.subtitle);
 
   return {
     input,
     searchCode,
-    filename,
-    topResult: { ...bestResult, detailUrl },
-    subtitle: {
-      downloadUrl,
-      score: bestSrt.score,
-      label: bestSrt.label || null,
-    },
-    error: null,
+    baseFilename: base,
+    downloadsTop3,
+    topResult: downloadsTop3[0]
+      ? {
+          downloads: downloadsTop3[0].downloads,
+          title: downloadsTop3[0].title,
+          detailUrl: downloadsTop3[0].detailUrl,
+        }
+      : null,
+    filename: firstWith ? firstWith.filename : `${base}_1.srt`,
+    subtitle: firstWith ? firstWith.subtitle : null,
+    error: anyChinese ? null : 'NO_CHINESE_SRT',
   };
 }
 
@@ -230,7 +246,7 @@ export default {
       const query = url.searchParams.get('query') || '';
       if (!query.trim()) return badRequest('Missing query');
       try {
-        const resolved = await resolveSubtitle(query);
+        const resolved = await resolveSubtitlesQuery(query);
         return json(resolved);
       } catch (err) {
         return json({ error: 'RESOLVE_FAILED', message: err?.message || String(err) }, { status: 502 });
@@ -241,9 +257,12 @@ export default {
       const query = url.searchParams.get('query') || '';
       if (!query.trim()) return badRequest('Missing query');
 
+      const indexRaw = url.searchParams.get('index') || '1';
+      const index = Math.max(1, Math.min(3, parseInt(indexRaw, 10) || 1));
+
       let resolved;
       try {
-        resolved = await resolveSubtitle(query);
+        resolved = await resolveSubtitlesQuery(query);
       } catch (err) {
         return json({ error: 'RESOLVE_FAILED', message: err?.message || String(err) }, { status: 502 });
       }
@@ -254,13 +273,19 @@ export default {
       if (resolved.error === 'NO_CHINESE_SRT') {
         return json(resolved, { status: 404 });
       }
-      if (!resolved.subtitle?.downloadUrl) {
-        return json({ error: 'UNKNOWN', resolved }, { status: 500 });
+
+      const item =
+        resolved.downloadsTop3 && resolved.downloadsTop3[index - 1] ? resolved.downloadsTop3[index - 1] : null;
+      if (!item || !item.subtitle || !item.subtitle.downloadUrl) {
+        return json(
+          { error: 'NO_CHINESE_AT_INDEX', index, message: '该名次无中文 SRT 或条目不存在' },
+          { status: 404 }
+        );
       }
 
       let upstream;
       try {
-        upstream = await fetch(resolved.subtitle.downloadUrl, {
+        upstream = await fetch(item.subtitle.downloadUrl, {
           headers: {
             'user-agent': 'subtitlecat-srt/1.0 (+workers)',
             'accept': 'text/plain, text/*, */*',
@@ -276,7 +301,7 @@ export default {
 
       const headers = new Headers();
       headers.set('content-type', 'application/x-subrip; charset=utf-8');
-      headers.set('content-disposition', `attachment; filename="${resolved.filename}"`);
+      headers.set('content-disposition', `attachment; filename="${item.filename}"`);
       headers.set('cache-control', 'no-store');
       headers.set('access-control-allow-origin', '*');
 

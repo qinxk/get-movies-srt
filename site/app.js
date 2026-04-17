@@ -5,6 +5,8 @@ const $ = function (id) {
   return document.getElementById(id);
 };
 
+var lastQuery = '';
+
 function setStatus(text, kind) {
   kind = kind || 'info';
   var el = $('status');
@@ -43,17 +45,6 @@ function renderKV(container, key, value, asLink) {
   container.appendChild(row);
 }
 
-function getProp(obj, path, fallback) {
-  if (obj == null) return fallback;
-  var parts = path.split('.');
-  var cur = obj;
-  for (var i = 0; i < parts.length; i++) {
-    if (cur == null) return fallback;
-    cur = cur[parts[i]];
-  }
-  return cur == null ? fallback : cur;
-}
-
 function resolveQuery(query) {
   if (!WORKER_ORIGIN || WORKER_ORIGIN.indexOf('REPLACE_WITH') !== -1) {
     throw new Error('请先在 site/app.js 里配置 WORKER_ORIGIN');
@@ -68,10 +59,44 @@ function resolveQuery(query) {
   });
 }
 
-function buildDownloadUrl(query) {
+function buildDownloadUrl(query, index) {
   var url = new URL('/api/download', WORKER_ORIGIN);
   url.searchParams.set('query', query);
+  if (index >= 1 && index <= 3) {
+    url.searchParams.set('index', String(index));
+  }
   return url.toString();
+}
+
+function clearDownloadLinks() {
+  var wrap = $('downloadLinks');
+  if (wrap) wrap.innerHTML = '';
+}
+
+function fillDownloadLinks(query, data) {
+  clearDownloadLinks();
+  var wrap = $('downloadLinks');
+  if (!wrap) return;
+
+  var top3 = (data && data.downloadsTop3) || [];
+  for (var i = 0; i < top3.length; i++) {
+    var it = top3[i];
+    var a = document.createElement('a');
+    a.className = 'secondary';
+    a.textContent = '下载 #' + it.rank + '（' + it.downloads + ' 次）';
+    if (it.subtitle && it.subtitle.downloadUrl) {
+      a.href = buildDownloadUrl(query, it.rank);
+      a.className = 'secondary';
+    } else {
+      a.href = '#';
+      a.className = 'secondary muted';
+      a.setAttribute('aria-disabled', 'true');
+      a.onclick = function (e) {
+        e.preventDefault();
+      };
+    }
+    wrap.appendChild(a);
+  }
 }
 
 function setPreview(data) {
@@ -82,20 +107,39 @@ function setPreview(data) {
 
   renderKV(container, '输入', data.input || '-');
   renderKV(container, '识别番号', data.searchCode || '-');
-  renderKV(container, '输出文件名', data.filename || '-');
 
-  var downloads = getProp(data, 'topResult.downloads', null);
-  renderKV(container, '最大 downloads', downloads != null ? downloads : '-', false);
+  var base = data.baseFilename || '';
+  if (!base && data.filename) {
+    base = String(data.filename).replace(/_\d+\.srt$/i, '').replace(/\.srt$/i, '');
+  }
+  renderKV(container, '文件名规则', (base || '-') + '_1.srt ~ _3.srt');
 
-  renderKV(container, '详情页', (data.topResult && data.topResult.detailUrl) || '-', true);
-  renderKV(container, '字幕语言', (data.subtitle && data.subtitle.label) || '-', false);
-  renderKV(container, '字幕链接', (data.subtitle && data.subtitle.downloadUrl) || '-', true);
+  var top3 = data.downloadsTop3 || [];
+  if (top3.length) {
+    var lines = [];
+    for (var t = 0; t < top3.length; t++) {
+      var it = top3[t];
+      var title = (it.title || '').length > 60 ? (it.title || '').slice(0, 60) + '…' : it.title || '';
+      lines.push('#' + it.rank + ' ' + it.downloads + ' 次 — ' + title + (it.subtitle ? ' 【有中文】' : ' 【无中文】'));
+    }
+    renderKV(container, '前 3 条（下载量降序）', lines.join('\n'), false);
+  } else if (data.topResult) {
+    var dls = data.topResult.downloads != null ? data.topResult.downloads : '-';
+    renderKV(container, '最大 downloads', dls, false);
+    renderKV(container, '详情页', data.topResult.detailUrl || '-', true);
+    renderKV(container, '字幕语言', (data.subtitle && data.subtitle.label) || '-', false);
+    renderKV(container, '字幕链接', (data.subtitle && data.subtitle.downloadUrl) || '-', true);
+  }
 
-  var downloadBtn = $('downloadBtn');
   var copyBtn = $('copyBtn');
-  var canDownload = !!(data.subtitle && data.subtitle.downloadUrl) && !data.error;
-  if (downloadBtn) downloadBtn.disabled = !canDownload;
-  if (copyBtn) copyBtn.disabled = !canDownload;
+  var hasAny = false;
+  for (var j = 0; j < top3.length; j++) {
+    if (top3[j].subtitle) {
+      hasAny = true;
+      break;
+    }
+  }
+  if (copyBtn) copyBtn.disabled = !hasAny;
 }
 
 function onResolve() {
@@ -106,26 +150,28 @@ function onResolve() {
     return;
   }
 
+  lastQuery = query;
+
   var resolveBtn = $('resolveBtn');
   if (resolveBtn) resolveBtn.disabled = true;
-  var dBtn = $('downloadBtn');
-  var cBtn = $('copyBtn');
-  if (dBtn) dBtn.disabled = true;
-  if (cBtn) cBtn.disabled = true;
+  var copyBtn = $('copyBtn');
+  if (copyBtn) copyBtn.disabled = true;
+  clearDownloadLinks();
 
-  setStatus('解析中...', 'info');
+  setStatus('解析中（可能需几秒，正在抓取前 3 条详情）...', 'info');
   setPreview({});
 
   resolveQuery(query)
     .then(function (data) {
       setPreview(data);
+      fillDownloadLinks(query, data);
 
       if (data && data.error === 'NO_RESULTS') {
         setStatus('未找到任何字幕结果。', 'error');
         return;
       }
       if (data && data.error === 'NO_CHINESE_SRT') {
-        setStatus('找到结果但未发现中文 SRT。', 'error');
+        setStatus('前 3 条均未发现中文 SRT。', 'error');
         return;
       }
       if (data && data.error) {
@@ -133,27 +179,33 @@ function onResolve() {
         return;
       }
 
-      setStatus('解析成功，可以下载。', 'ok');
-
-      var downloadUrl = buildDownloadUrl(query);
-      if (dBtn) {
-        dBtn.onclick = function () {
-          window.location.href = downloadUrl;
-        };
+      var n = 0;
+      var top3 = data.downloadsTop3 || [];
+      for (var i = 0; i < top3.length; i++) {
+        if (top3[i].subtitle) n += 1;
       }
-      if (cBtn) {
-        cBtn.onclick = function () {
+      setStatus('解析成功：共 ' + top3.length + ' 条结果，其中 ' + n + ' 条可下载中文 SRT。', 'ok');
+
+      if (copyBtn) {
+        copyBtn.onclick = function () {
+          var parts = [];
+          for (var k = 0; k < top3.length; k++) {
+            if (top3[k].subtitle) {
+              parts.push(buildDownloadUrl(query, top3[k].rank));
+            }
+          }
+          var text = parts.join('\n');
           if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(downloadUrl).then(
+            navigator.clipboard.writeText(text).then(
               function () {
-                setStatus('已复制下载链接。', 'ok');
+                setStatus('已复制 ' + parts.length + ' 个下载链接。', 'ok');
               },
               function () {
-                setStatus('复制失败（浏览器不支持剪贴板权限）。', 'error');
+                setStatus('复制失败。', 'error');
               }
             );
           } else {
-            setStatus('复制失败（浏览器不支持剪贴板权限）。', 'error');
+            setStatus('复制失败（浏览器不支持剪贴板）。', 'error');
           }
         };
       }
@@ -161,6 +213,7 @@ function onResolve() {
     .catch(function (e) {
       var msg = e && e.message ? e.message : String(e);
       setStatus(msg, 'error');
+      clearDownloadLinks();
     })
     .then(function () {
       if (resolveBtn) resolveBtn.disabled = false;
@@ -178,7 +231,6 @@ function bindUi() {
   }
 }
 
-// 动态插入 + defer 的 app.js 可能在 DOMContentLoaded 之后才执行，仅监听 DOMContentLoaded 会永远不绑定点击
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', bindUi);
 } else {

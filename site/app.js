@@ -1,5 +1,5 @@
 // Configure to your deployed Worker origin, e.g. https://subtitlecat-srt.<your-subdomain>.workers.dev
-const WORKER_ORIGIN = ${{ WORKER_ORIGIN }};
+const WORKER_ORIGIN = 'https://subtitlecat-srt.linfengwuchen.workers.dev';
 
 const $ = (id) => document.getElementById(id);
 

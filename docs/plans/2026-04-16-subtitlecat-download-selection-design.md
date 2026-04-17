@@ -1,13 +1,13 @@
 # SubtitleCat 下载量最大选择 + 中文 SRT 下载（设计）
 
-**Goal:** 用户在插件弹窗输入名称/编号后，自动在 SubtitleCat 搜索结果中选择 `downloads` 次数最多的条目进入详情页，并自动下载中文 `.srt`。
+**Goal:** 用户在插件弹窗输入名称/编号后，自动在 SubtitleCat 搜索结果中按 `downloads` 降序取前 3 条，分别进入详情页选择中文 `.srt` 并触发下载。
 
 ## 范围
 
 - **包含**
   - 搜索页抓取结果列表
-  - 稳定解析每个结果的 `downloads` 数值，并选择最大值对应的详情链接
-  - 进入详情页后选择中文 `.srt`（含简/繁体优先级）并触发浏览器下载
+  - 稳定解析每个结果的 `downloads` 数值，并按降序取前 3 条详情链接
+  - 进入详情页后选择中文 `.srt`（含简/繁体优先级）并触发浏览器下载（最多 3 个文件）
   - 失败/异常时给出明确状态提示
 - **不包含（YAGNI）**
   - 登录/鉴权
@@ -16,13 +16,13 @@
 
 ## 核心策略
 
-### A. 结果页选择 downloads 最大（推荐主路径）
+### A. 结果页按 downloads 降序取前 3 条（推荐主路径）
 
 1. 解析搜索结果表格结构：
    - 优先从表头 `th` 找到名为 `Downloads`/`downloads`（或包含 “download” 关键字）的列索引。
 2. 对每一行 `tr`：
    - 在该列索引对应的 `td` 中提取数字（只读该单元格文本，避免整行 `textContent` 引入其它数字干扰）。
-3. 取 downloads 最大的行，提取其详情页链接（`a[href*="subtitle"]`）。
+3. 取 downloads 最大的前 3 行，提取其详情页链接（SubtitleCat 搜索结果为 `subs/.../*.html`）。
 
 ### B. 降级：逐列匹配 downloads 单元格
 
@@ -38,7 +38,7 @@
 
 从详情页收集所有 `.srt` 下载链接后，按以下优先级选择：
 
-1. **简体优先**：`Chinese (Simplified)` / `简体` / `zh-CN` / `chs`
+1. **简体优先**：`Chinese (Simplified)` / `Chinese simplified` / `Chinese simple` / `简体` / `zh-CN|zh_Hans` / `chs`
 2. **繁体其次**：`Chinese (Traditional)` / `繁体` / `zh-TW` / `cht`
 3. **中文兜底**：`Chinese` / `中文`
 

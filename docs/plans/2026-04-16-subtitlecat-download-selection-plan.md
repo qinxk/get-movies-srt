@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Make SubtitleCat search result parsing reliably select the entry with highest downloads, then download the best-matching Chinese `.srt` from the detail page.
+**Goal:** Make SubtitleCat search result parsing reliably select the top 3 entries by downloads, then download the best-matching Chinese `.srt` for each (Simplified preferred).
 
 **Architecture:** In `popup.js`, replace the "parse downloads from whole row text" logic with a table-aware extractor: (A) header-driven downloads column index, (B) fallback per-cell scan for a downloads cell, (C) strict regex fallback. Add a deterministic Chinese SRT ranking function to pick best link.
 
@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Harden downloads extraction (A/B/C)
+### Task 1: Harden downloads extraction (A/B/C) and select top 3
 
 **Files:**
 - Modify: `popup.js`
@@ -27,15 +27,15 @@
 **Step 2: Replace current row-mapping logic**
 
 - Iterate `tr` rows
-- For each row, find `a[href*="subtitle"]`
+- For each row, find search-result links (SubtitleCat uses `subs/.../*.html`)
 - Compute downloads via `getRowDownloads`
-- Keep `{ href, downloads }` and choose max
+- Sort desc by downloads and take top 3 (or select top 3 in one pass)
 
 **Step 3: Verify behavior on a known query**
 
 - Manual test in browser extension popup:
   - Input a known code that returns multiple results with different downloads
-  - Ensure status message shows the max downloads chosen
+- Ensure status message shows the top 3 downloads chosen and downloads order is correct
 
 ---
 
@@ -56,7 +56,7 @@
 
 **Step 2: Pick best link**
 
-- Sort by score desc; take first with score > 0
+- Sort by score desc; take first with score > 0 (for each of the top 3 results)
 - If none, show "未发现中文 SRT 文件"
 
 **Step 3: Verify on a detail page**

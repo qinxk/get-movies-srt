@@ -5,8 +5,6 @@ const $ = function (id) {
   return document.getElementById(id);
 };
 
-var lastQuery = '';
-
 function setStatus(text, kind) {
   kind = kind || 'info';
   var el = $('status');
@@ -112,7 +110,7 @@ function setPreview(data) {
   if (!base && data.filename) {
     base = String(data.filename).replace(/_\d+\.srt$/i, '').replace(/\.srt$/i, '');
   }
-  renderKV(container, '文件名规则', (base || '-') + '_1.srt ~ _3.srt');
+  renderKV(container, '输出文件名', (data.filename || ((base || '-') + '.srt')));
 
   var top3 = data.downloadsTop3 || [];
   if (top3.length) {
@@ -130,16 +128,6 @@ function setPreview(data) {
     renderKV(container, '字幕语言', (data.subtitle && data.subtitle.label) || '-', false);
     renderKV(container, '字幕链接', (data.subtitle && data.subtitle.downloadUrl) || '-', true);
   }
-
-  var copyBtn = $('copyBtn');
-  var hasAny = false;
-  for (var j = 0; j < top3.length; j++) {
-    if (top3[j].subtitle) {
-      hasAny = true;
-      break;
-    }
-  }
-  if (copyBtn) copyBtn.disabled = !hasAny;
 }
 
 function onResolve() {
@@ -150,12 +138,8 @@ function onResolve() {
     return;
   }
 
-  lastQuery = query;
-
   var resolveBtn = $('resolveBtn');
   if (resolveBtn) resolveBtn.disabled = true;
-  var copyBtn = $('copyBtn');
-  if (copyBtn) copyBtn.disabled = true;
   clearDownloadLinks();
 
   setStatus('解析中（可能需几秒，正在抓取前 3 条详情）...', 'info');
@@ -185,30 +169,6 @@ function onResolve() {
         if (top3[i].subtitle) n += 1;
       }
       setStatus('解析成功：共 ' + top3.length + ' 条结果，其中 ' + n + ' 条可下载中文 SRT。', 'ok');
-
-      if (copyBtn) {
-        copyBtn.onclick = function () {
-          var parts = [];
-          for (var k = 0; k < top3.length; k++) {
-            if (top3[k].subtitle) {
-              parts.push(buildDownloadUrl(query, top3[k].rank));
-            }
-          }
-          var text = parts.join('\n');
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(
-              function () {
-                setStatus('已复制 ' + parts.length + ' 个下载链接。', 'ok');
-              },
-              function () {
-                setStatus('复制失败。', 'error');
-              }
-            );
-          } else {
-            setStatus('复制失败（浏览器不支持剪贴板）。', 'error');
-          }
-        };
-      }
     })
     .catch(function (e) {
       var msg = e && e.message ? e.message : String(e);

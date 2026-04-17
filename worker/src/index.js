@@ -20,6 +20,14 @@ function badRequest(message) {
   return json({ error: message }, { status: 400 });
 }
 
+/** 统一去掉尾部 /，避免 /api/resolve/ 匹配不到 */
+function normalizePath(pathname) {
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    return pathname.slice(0, -1);
+  }
+  return pathname || '/';
+}
+
 function sanitizeFilenameBase(name) {
   const s = String(name || '').trim();
   const cleaned = s.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
@@ -137,6 +145,7 @@ async function resolveSubtitlesQuery(query) {
   const input = String(query || '').trim();
   const searchCode = extractSearchCode(input);
   const base = sanitizeFilenameBase(input);
+  const filename = `${base}.srt`;
 
   const searchUrl = `${SUBTITLECAT_ORIGIN}/index.php?search=${encodeURIComponent(searchCode)}`;
   const searchHtml = await fetchTextOrThrow(searchUrl, {
@@ -154,7 +163,7 @@ async function resolveSubtitlesQuery(query) {
       baseFilename: base,
       downloadsTop3: [],
       topResult: null,
-      filename: `${base}_1.srt`,
+      filename,
       subtitle: null,
       error: 'NO_RESULTS',
     };
@@ -193,7 +202,8 @@ async function resolveSubtitlesQuery(query) {
       downloads: r.downloads,
       title: r.title,
       detailUrl,
-      filename: `${base}_${rank}.srt`,
+      // Keep filename consistent with user input; browser will auto-uniquify on duplicates.
+      filename,
       subtitle,
     });
   }
@@ -213,7 +223,7 @@ async function resolveSubtitlesQuery(query) {
           detailUrl: downloadsTop3[0].detailUrl,
         }
       : null,
-    filename: firstWith ? firstWith.filename : `${base}_1.srt`,
+    filename,
     subtitle: firstWith ? firstWith.subtitle : null,
     error: anyChinese ? null : 'NO_CHINESE_SRT',
   };
@@ -221,39 +231,46 @@ async function resolveSubtitlesQuery(query) {
 
 export default {
   async fetch(request) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
+      const path = normalizePath(url.pathname);
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET, OPTIONS',
-          'access-control-allow-headers': 'content-type',
-        },
-      });
-    }
-
-    if (request.method !== 'GET') {
-      return text('Method Not Allowed', { status: 405 });
-    }
-
-    if (url.pathname === '/' || url.pathname === '/health') {
-      return json({ ok: true });
-    }
-
-    if (url.pathname === '/api/resolve') {
-      const query = url.searchParams.get('query') || '';
-      if (!query.trim()) return badRequest('Missing query');
-      try {
-        const resolved = await resolveSubtitlesQuery(query);
-        return json(resolved);
-      } catch (err) {
-        return json({ error: 'RESOLVE_FAILED', message: err?.message || String(err) }, { status: 502 });
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'access-control-allow-origin': '*',
+            'access-control-allow-methods': 'GET, OPTIONS',
+            'access-control-allow-headers': 'content-type',
+            'access-control-max-age': '86400',
+          },
+        });
       }
-    }
 
-    if (url.pathname === '/api/download') {
+      if (request.method !== 'GET') {
+        return text('Method Not Allowed', { status: 405 });
+      }
+
+      if (path === '/' || path === '/health') {
+        return json({ ok: true });
+      }
+
+      if (path === '/api/resolve') {
+        const query = url.searchParams.get('query') || '';
+        if (!query.trim()) return badRequest('Missing query');
+        try {
+          const resolved = await resolveSubtitlesQuery(query);
+          // 业务上的「无结果」仍用 200 + JSON，避免浏览器把 404 当成「Worker 不存在」
+          return json(resolved);
+        } catch (err) {
+          return json(
+            { error: 'RESOLVE_FAILED', message: err?.message || String(err) },
+            { status: 502 }
+          );
+        }
+      }
+
+      if (path === '/api/download') {
       const query = url.searchParams.get('query') || '';
       if (!query.trim()) return badRequest('Missing query');
 
@@ -306,9 +323,15 @@ export default {
       headers.set('access-control-allow-origin', '*');
 
       return new Response(upstream.body, { status: 200, headers });
-    }
+      }
 
-    return text('Not Found', { status: 404 });
+      return text('Not Found: ' + path, { status: 404 });
+    } catch (e) {
+      return json(
+        { error: 'WORKER_EXCEPTION', message: e?.message || String(e) },
+        { status: 500 }
+      );
+    }
   },
 };
 

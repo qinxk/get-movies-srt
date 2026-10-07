@@ -12,9 +12,29 @@
 - `site/`：GitHub Pages 静态站点
   - `index.html`
   - `app.js`
-- `worker/`：Cloudflare Workers
+- `worker/`：Cloudflare Workers（v2）
   - `src/index.js`
   - `wrangler.toml`
+  - `test/`：离线测试，用真实上游 HTML 夹具（`npm test`）
+- `docs/plans/`：设计文档
+
+---
+
+## Worker v2 改了什么
+
+| # | 问题 | v1 | v2 |
+| --- | --- | --- | --- |
+| 1 | 下载量解析 | 数字与 `downloads` 之间隔着 `<span>`，正则匹配不到 → 所有候选恒为 0，所谓「前三」其实是页面顺序 | 先剥标签再取值，实测同一搜索页拿到 `71/63/41/39/29/25/14/9` |
+| 2 | 中文识别 | ±250 字窗口猜，相邻行的 `Chinese (Traditional)` 会污染上一行打分 | 读 `<a id="download_zh-CN">` 的语言码，简体 > 中文 > 繁体 |
+| 3 | 默认候选 | 写死 `#1`，`#1` 没中文就 404（哪怕 `#2` 有） | 不传 `index` 时自动选第一条有中文的 |
+| 4 | 详情页抓取 | 串行 3 次 | 并发，耗时约 1/3 |
+| 5 | 上游缓存 | 无 | 内存 + Cache API（不可用时自动降级） |
+| 6 | 中文文件名 | 非法响应头，Safari 会乱码 | ASCII 兜底 + `filename*=UTF-8''…`（RFC 5987） |
+| 7 | 出错提示 | 手机浏览器只看到一坨 JSON | 按 `Accept` 协商：浏览器 302 到详情页，脚本仍拿 JSON |
+| 8 | 手机端 | 依赖 GitHub Pages，且要「解析 → 再下载」两步 | Worker 直接在 `/` 提供一步下载页 |
+| 9 | 语言 | 只能简体 | `?lang=zh-TW` / `?lang=zh-HK` |
+
+接口保持向后兼容：`/api/resolve` 的字段与 `/api/download?query=&index=` 都没变，现有 `site/` 页面无需改动。
 
 ---
 
@@ -102,6 +122,48 @@ const WORKER_ORIGIN = 'https://subtitlecat-srt.<your-subdomain>.workers.dev';
 5. 点击 **下载 SRT**：浏览器会下载到手机本地
 
 然后你可以在 VLC 里手动选择该 `.srt` 作为外部字幕。
+
+---
+
+## 手机端一步下载
+
+Worker v2 自己托管了一个页面，**不依赖 GitHub Pages**：
+
+- `https://subtitlecat-srt.linfengwuchen.workers.dev`
+
+特性：
+
+- 输入番号 → 回车 → **直接开始下载**（不用先「解析」再点「下载」）
+- 三个 `候选 #1/#2/#3` 按钮，已知是哪条时一键跳过排序歧义
+- 最近 6 条番号存在本地，可一键复用
+- 带参直达：`/?q=JUL-185` 预填、`/?q=JUL-185&go=1` 预填并立刻下载（给快捷指令 / 书签用）
+- 没有中文字幕时会自动跳到 SubtitleCat 详情页，不会静默失败
+
+接入方式：
+
+| 平台 | 做法 |
+| --- | --- |
+| iOS / Android 通用 | 浏览器打开上面的地址 → 分享 / 菜单 → **添加到主屏幕**，当 App 用 |
+| iOS 快捷指令 | `要求输入` → `文本`（拼 `…/api/download?query=[输入]&name=[输入].srt`）→ `打开 URL`；可挂到 Siri 与分享表单 |
+| Android Chrome | 设置 → 搜索引擎 → 站点搜索：快捷字词 `srt`，网址 `…/api/download?query=%s`，之后地址栏敲 `srt JUL-185` |
+| 任意浏览器 | 书签直接存 `…/api/download?query=JUL-185`，点一下就是一次下载 |
+
+iOS 15 之后快捷指令导入必须签名，所以上面只给步骤、不给 `.shortcut` 文件，自己搭一次约一分钟。
+
+---
+
+## 本地测试
+
+不需要联网、不需要 wrangler：
+
+```bash
+cd worker
+npm test          # 等价于 node test/run-tests.mjs
+```
+
+夹具是 2026-10-07 从 SubtitleCat 实际抓下来的页面（`worker/test/fixtures/`），共 48 项断言，
+覆盖下载量解析、排序、简繁选择、`lang` 指定、缓存命中、候选回退、响应头合法性、出错协商、页面路由。
+上游改版导致解析再次失效时，重新抓一份 HTML 覆盖夹具，跑测试就能立刻定位到哪一步断了。
 
 ---
 

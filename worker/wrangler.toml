@@ -2,3 +2,10 @@ name = "subtitlecat-srt"
 main = "src/index.js"
 compatibility_date = "2026-04-16"
 
+# 本地测试：npm test（不需要联网，用 test/fixtures 里的真实上游 HTML）
+#
+# 可选：绑定自己的域名。*.workers.dev 在部分网络（含国内多数线路）会被干扰，
+# 挂上自有域名会稳定很多。取消下面注释并改成你的域名即可。
+# [[routes]]
+# pattern = "srt.example.com"
+# custom_domain = true

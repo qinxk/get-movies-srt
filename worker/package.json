@@ -1,0 +1,9 @@
+{
+  "name": "subtitlecat-srt",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/run-tests.mjs",
+    "deploy": "wrangler deploy"
+  }
+}
